@@ -1,0 +1,81 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+
+    "users": {
+      ".read":  "auth != null && auth.token.email === 'abdulrahmanalhamoud1673@gmail.com' && auth.token.email_verified === true",
+      ".write": "auth != null && auth.token.email === 'abdulrahmanalhamoud1673@gmail.com' && auth.token.email_verified === true",
+      ".indexOn": ["lastSeen"],
+
+      "$uid": {
+        ".read": "auth != null && auth.uid === $uid",
+
+        "name":       { ".write": "auth.uid === $uid && !root.child('bans').child($uid).exists() && newData.exists()",
+                        ".validate": "newData.isString() && newData.val().length <= 24" },
+        "lastSeen":   { ".write": "auth.uid === $uid && !root.child('bans').child($uid).exists() && newData.exists()",
+                        ".validate": "newData.isNumber()" },
+        "city":       { ".write": "auth.uid === $uid && !root.child('bans').child($uid).exists() && newData.exists()",
+                        ".validate": "newData.isString() && newData.val().length <= 60" },
+        "country":    { ".write": "auth.uid === $uid && !root.child('bans').child($uid).exists() && newData.exists()",
+                        ".validate": "newData.isString() && newData.val().length <= 60" },
+        "device":     { ".write": "auth.uid === $uid && !root.child('bans').child($uid).exists() && newData.exists()",
+                        ".validate": "newData.isString() && newData.val().length <= 200" },
+
+        "firstSeen":  { ".write": "auth.uid === $uid && !root.child('bans').child($uid).exists() && newData.exists()",
+                        ".validate": "newData.isNumber() && (!data.exists() || newData.val() === data.val())" },
+
+        "visits":     { ".write": "auth.uid === $uid && !root.child('bans').child($uid).exists() && newData.exists()",
+                        ".validate": "newData.isNumber() && (!data.exists() || newData.val() >= data.val())" },
+        "gestures":   { ".write": "auth.uid === $uid && !root.child('bans').child($uid).exists() && newData.exists()",
+                        ".validate": "newData.isNumber() && (!data.exists() || newData.val() >= data.val())" },
+        "violations": { ".write": "auth.uid === $uid && !root.child('bans').child($uid).exists() && newData.exists()",
+                        ".validate": "newData.isNumber() && (!data.exists() || newData.val() >= data.val())" },
+
+        "$other": { ".validate": false }
+      }
+    },
+
+    "events": {
+      ".read":  "auth != null && auth.token.email === 'abdulrahmanalhamoud1673@gmail.com' && auth.token.email_verified === true",
+      ".write": "auth != null && auth.token.email === 'abdulrahmanalhamoud1673@gmail.com' && auth.token.email_verified === true",
+      "$uid": {
+        "$id": {
+          ".write": "auth != null && auth.uid === $uid && !root.child('bans').child($uid).exists() && !data.exists() && newData.exists()",
+          ".validate": "newData.hasChildren(['g','t'])",
+          "g":      { ".validate": "newData.isString() && newData.val().length <= 24" },
+          "t":      { ".validate": "newData.isNumber()" },
+          "$other": { ".validate": false }
+        }
+      }
+    },
+
+    "violations": {
+      ".read":  "auth != null && auth.token.email === 'abdulrahmanalhamoud1673@gmail.com' && auth.token.email_verified === true",
+      ".write": "auth != null && auth.token.email === 'abdulrahmanalhamoud1673@gmail.com' && auth.token.email_verified === true",
+      "$id": {
+        ".write": "auth != null && !root.child('bans').child(auth.uid).exists() && !data.exists() && newData.exists()",
+        ".validate": "newData.hasChildren(['uid','t','type']) && newData.child('uid').val() === auth.uid",
+        "uid":    { ".validate": "newData.isString()" },
+        "name":   { ".validate": "newData.isString() && newData.val().length <= 24" },
+        "t":      { ".validate": "newData.isNumber()" },
+        "type":   { ".validate": "newData.isString() && newData.val().length <= 24" },
+        "place":  { ".validate": "newData.isString() && newData.val().length <= 80" },
+        "img":    { ".validate": "newData.isString() && newData.val().length < 90000" },
+        "$other": { ".validate": false }
+      }
+    },
+
+    "bans": {
+      ".read":  "auth != null && auth.token.email === 'abdulrahmanalhamoud1673@gmail.com' && auth.token.email_verified === true",
+      ".write": "auth != null && auth.token.email === 'abdulrahmanalhamoud1673@gmail.com' && auth.token.email_verified === true",
+      "$uid": {
+        ".read": "auth != null",
+        "reason": { ".validate": "newData.isString() && newData.val().length <= 100" },
+        "at":     { ".validate": "newData.isNumber()" },
+        "name":   { ".validate": "newData.isString() && newData.val().length <= 24" },
+        "$other": { ".validate": false }
+      }
+    }
+  }
+}

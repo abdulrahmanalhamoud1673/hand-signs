@@ -66,6 +66,26 @@
   #status{font-size:15px;opacity:.7;min-height:1.6em}
   .err{color:#ff8a8a!important;opacity:1!important}
   .big{font-size:56px}
+
+  /* الاسم + التحذير */
+  #name{width:min(90vw,320px);padding:14px 16px;border-radius:14px;border:1px solid #2c3352;
+    background:rgba(12,14,26,.8);color:#fff;font-size:17px;font-family:inherit;text-align:center}
+  #name:focus{outline:2px solid #ffd93b;border-color:transparent}
+  .consent{background:rgba(255,200,80,.09);border:1px solid rgba(255,200,80,.32);color:#ffd9a0;
+    border-radius:14px;padding:12px 16px;font-size:13.5px;line-height:1.95;
+    max-width:min(92vw,30em);text-align:right}
+
+  /* شاشة الحظر */
+  #blocked{position:absolute;inset:0;z-index:20;display:none;flex-direction:column;
+    align-items:center;justify-content:center;gap:14px;padding:28px;text-align:center;
+    background:radial-gradient(circle at 50% 35%,#2a0d14,#0d0507 70%)}
+  #blocked h2{font-size:32px;color:#ff8a8a}
+  #blocked p{opacity:.75;font-size:16px;line-height:1.9;max-width:24em}
+
+  /* وميض التصوير */
+  #flash{position:absolute;inset:0;background:#fff;opacity:0;pointer-events:none;z-index:15}
+  #flash.go{animation:snap .5s ease-out}
+  @keyframes snap{0%{opacity:.9}100%{opacity:0}}
 </style>
 </head>
 <body>
@@ -86,14 +106,35 @@
     <div class="big">🖐️</div>
     <h1>إشارات إيدي</h1>
     <p>وجّه الكاميرا الأمامية على إيدك، اعمل لايك 👍 أو ديسلايك 👎 وشوف شو بيصير.</p>
+    <input id="name" placeholder="شو اسمك؟" maxlength="24" autocomplete="off">
+    <div class="consent">
+      ⚠️ قبل ما تبلّش: صاحب الموقع بيشوف اسمك، وقت دخولك، وبلدك التقريبي.
+      وإذا عملت إشارة مسيئة 🖕 رح تنحفظ <b>لقطة من الكاميرا</b> وتوصله.
+      بضغطك على «ابدأ» أنت موافق على هذا.
+    </div>
     <button id="go">ابدأ 🎥</button>
     <p id="status"></p>
+  </div>
+
+  <div id="flash"></div>
+
+  <div id="blocked">
+    <div class="big">🚫</div>
+    <h2>أنت محظور</h2>
+    <p id="banReason"></p>
+    <p style="font-size:13px;opacity:.5">إذا بتشوف إنه في غلط، احكي مع صاحب الموقع.</p>
   </div>
 </div>
 
 <script type="module">
 import { GestureRecognizer, FilesetResolver }
   from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
+import { firebaseConfig, isConfigured } from "./firebase-config.js";
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
+import { getAuth, signInAnonymously }
+  from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
+import { getDatabase, ref, get, update, push, onValue, increment }
+  from "https://www.gstatic.com/firebasejs/10.12.5/firebase-database.js";
 
 const video  = document.getElementById('cam');
 const canvas = document.getElementById('draw');
@@ -106,6 +147,11 @@ const startScreen = document.getElementById('start');
 const statusEl = document.getElementById('status');
 const goBtn  = document.getElementById('go');
 const muteBtn= document.getElementById('mute');
+const nameInput = document.getElementById('name');
+const flashEl   = document.getElementById('flash');
+const blockedEl = document.getElementById('blocked');
+
+try { nameInput.value = localStorage.getItem('hs_name') || ''; } catch {}
 
 /* ---------- الشخصيات (رسم SVG جوّا الصفحة) ---------- */
 const LAUGH = `<svg class="char" viewBox="0 0 200 200">
@@ -180,6 +226,12 @@ const REACTIONS = {
     char: '<div class="char" style="font-size:min(40vw,180px);line-height:1;text-align:center">🤟</div>',
     badge: '', rain: ['❤️','🤟','✨'], color: '#ff6b81', sound: 'up',
     lines: ['وأنا كمان بحبك ❤️','يا قلبي عليك 🥰','روك أند رول 🤘']
+  },
+  // إشارة مسيئة — بتنرصد بالإيد مش من MediaPipe
+  Rude: {
+    char: '<div class="char" style="font-size:min(40vw,180px);line-height:1;text-align:center">🚨</div>',
+    badge: '', rain: ['📸','🚨','😡'], color: '#ff3b3b', sound: 'down',
+    lines: ['📸 انحفظت لقطة ووصلت لصاحب الموقع','عيب! هاي انسجلت عليك 😐','مخالفة مسجّلة — تصرّف بأدب 🚫']
   }
 };
 
@@ -298,9 +350,117 @@ function drawHands(hands){
   }
 }
 
+/* ---------- التسجيل والحظر (Firebase) ---------- */
+let db = null, uid = null, tracking = false;
+let myName = '', myCity = '', myCountry = '';
+
+// البلد التقريبي من الإنترنت — إذا ما زبط منكمل عادي
+async function getPlace(){
+  const opts = typeof AbortSignal?.timeout === 'function' ? { signal: AbortSignal.timeout(4000) } : {};
+  for (const url of ['https://ipwho.is/', 'https://get.geojs.io/v1/ip/geo.json']){
+    try {
+      const j = await (await fetch(url, opts)).json();
+      const city = String(j.city || '').slice(0, 60);
+      const country = String(j.country || j.country_name || '').slice(0, 60);
+      if (city || country) return [city, country];
+    } catch {}
+  }
+  return ['', ''];
+}
+
+// بيسجل الدخول (مجهول) وبيتأكد إذا الشخص محظور
+async function signInAndCheck(){
+  if (!isConfigured) return { ok: true };
+  try {
+    const app = initializeApp(firebaseConfig);
+    db = getDatabase(app);
+    uid = (await signInAnonymously(getAuth(app))).user.uid;
+  } catch (e){
+    console.warn('التسجيل مطفي:', e);   // الموقع بيضل شغال بدون تسجيل
+    db = null; return { ok: true };
+  }
+
+  try {
+    const ban = await get(ref(db, 'bans/' + uid));
+    if (ban.exists()) return { ok: false, reason: ban.val()?.reason || '' };
+  } catch (e){ console.warn('ما قدرت أتأكد من الحظر:', e); }
+
+  try {
+    const old = await get(ref(db, 'users/' + uid));
+    [myCity, myCountry] = await getPlace();
+    await update(ref(db, 'users/' + uid), {
+      ...(old.exists() ? {} : { firstSeen: Date.now(), gestures: 0, violations: 0 }),
+      name: myName, lastSeen: Date.now(), visits: increment(1),
+      city: myCity, country: myCountry, device: navigator.userAgent.slice(0, 200)
+    });
+    tracking = true;
+  } catch (e){ console.warn('ما قدرت أسجل الزيارة:', e); }
+
+  return { ok: true };
+}
+
+// لو حظرته وهو فاتح الموقع، بينقفل بوجهه فوراً
+function watchBan(){
+  if (!db || !uid) return;
+  onValue(ref(db, 'bans/' + uid), s => { if (s.exists()) block(s.val()?.reason || ''); });
+}
+
+function block(reason){
+  document.getElementById('banReason').textContent = reason ? 'السبب: ' + reason : '';
+  blockedEl.style.display = 'flex';
+  recognizer = null;
+  const s = video.srcObject;                       // نطفي الكاميرا
+  if (s) s.getTracks().forEach(t => t.stop());
+}
+
+function logGesture(name){
+  if (!tracking) return;
+  push(ref(db, 'events/' + uid), { g: name, t: Date.now() }).catch(() => {});
+  update(ref(db, 'users/' + uid), { gestures: increment(1), lastSeen: Date.now() }).catch(() => {});
+}
+
+setInterval(() => {
+  if (tracking) update(ref(db, 'users/' + uid), { lastSeen: Date.now() }).catch(() => {});
+}, 45000);
+
+// لقطة صغيرة من الكاميرا (بس وقت المخالفة)
+function snapshot(){
+  try {
+    const w = 320, h = Math.round(w * video.videoHeight / video.videoWidth) || 240;
+    const c = document.createElement('canvas'); c.width = w; c.height = h;
+    const g = c.getContext('2d');
+    g.translate(w, 0); g.scale(-1, 1);             // نفس اتجاه المراية
+    g.drawImage(video, 0, 0, w, h);
+    let d = c.toDataURL('image/jpeg', 0.55);
+    if (d.length > 85000) d = c.toDataURL('image/jpeg', 0.3);
+    return d.length > 88000 ? '' : d;
+  } catch { return ''; }
+}
+
+async function reportViolation(){
+  flashEl.classList.remove('go'); void flashEl.offsetWidth; flashEl.classList.add('go');
+  showReaction('Rude');
+  if (!tracking) return;
+  const img = snapshot();
+  try {
+    await push(ref(db, 'violations'), {
+      uid, name: myName, t: Date.now(), type: 'middle_finger',
+      place: [myCity, myCountry].filter(Boolean).join('، '), img
+    });
+    await update(ref(db, 'users/' + uid), { violations: increment(1), lastSeen: Date.now() });
+  } catch (e){ console.warn('ما وصلت المخالفة:', e); }
+}
+
+// رصد الإصبع الوسطى: الوسطى ممدودة والباقي مطوي
+function isRude(lm){
+  const d = (a, b) => Math.hypot(lm[a].x - lm[b].x, lm[a].y - lm[b].y);
+  const r = (tip, pip) => d(tip, 0) / (d(pip, 0) || 1e-6);
+  return r(12,10) > 1.28 && r(8,6) < 1.12 && r(16,14) < 1.12 && r(20,18) < 1.12;
+}
+
 /* ---------- التشغيل ---------- */
 let recognizer = null, lastVideoTime = -1;
-let stableName = null, stableCount = 0, firedName = null, noneCount = 0;
+let stableName = null, stableCount = 0, firedName = null, noneCount = 0, lastRude = 0;
 
 async function buildRecognizer(){
   const vision = await FilesetResolver.forVisionTasks(
@@ -327,6 +487,13 @@ function loop(){
 
   drawHands(res.landmarks);
 
+  // إشارة مسيئة؟ منسجلها ومنوقف هون (ما بدنا إشارة ثانية تغطي عليها)
+  if ((res.landmarks || []).some(isRude)){
+    stableName = null; stableCount = 0; firedName = 'Rude';
+    if (Date.now() - lastRude > 8000){ lastRude = Date.now(); reportViolation(); }
+    return;
+  }
+
   const top = res.gestures?.[0]?.[0];
   const name = (top && top.score > 0.6 && REACTIONS[top.categoryName]) ? top.categoryName : null;
 
@@ -335,7 +502,9 @@ function loop(){
     stableCount = (name === stableName) ? stableCount + 1 : 1;
     stableName = name;
     // لازم تثبت الإشارة 3 فريمات، وما بتتكرر إلا لما تشيل إيدك
-    if (stableCount === 3 && name !== firedName){ firedName = name; showReaction(name); }
+    if (stableCount === 3 && name !== firedName){
+      firedName = name; showReaction(name); logGesture(name);
+    }
   } else {
     stableName = null; stableCount = 0;
     if (++noneCount > 8) firedName = null;   // شلت إيدك؟ منقدر نعيدها
@@ -343,6 +512,14 @@ function loop(){
 }
 
 goBtn.onclick = async () => {
+  const n = nameInput.value.trim();
+  if (n.length < 2){
+    statusEl.className = 'err'; statusEl.textContent = 'اكتب اسمك أول 🙂';
+    nameInput.focus(); return;
+  }
+  myName = n.slice(0, 24);
+  try { localStorage.setItem('hs_name', myName); } catch {}
+
   goBtn.disabled = true;
   try {
     audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -350,7 +527,11 @@ goBtn.onclick = async () => {
   } catch {}
 
   try {
-    statusEl.className = ''; statusEl.textContent = 'جاري فتح الكاميرا…';
+    statusEl.className = ''; statusEl.textContent = 'لحظة…';
+    const chk = await signInAndCheck();
+    if (!chk.ok){ startScreen.style.display = 'none'; block(chk.reason); return; }
+
+    statusEl.textContent = 'جاري فتح الكاميرا…';
     let stream;
     try {
       stream = await navigator.mediaDevices.getUserMedia({
@@ -365,6 +546,7 @@ goBtn.onclick = async () => {
     statusEl.textContent = 'جاري تحميل قارئ الإشارات… (أول مرة بس)';
     recognizer = await buildRecognizer();
 
+    watchBan();
     fitCanvas();
     startScreen.style.display = 'none';
     loop();
