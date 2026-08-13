@@ -3,11 +3,11 @@
 // بدّل كل قيمة فيها PUT_ بالقيمة الحقيقية.
 
 export const firebaseConfig = {
-  apiKey:      "PUT_API_KEY",
-  authDomain:  "PUT_PROJECT_ID.firebaseapp.com",
-  databaseURL: "https://PUT_PROJECT_ID-default-rtdb.firebaseio.com",
-  projectId:   "PUT_PROJECT_ID",
-  appId:       "PUT_APP_ID"
+  apiKey:      "AIzaSyBmMnfkimpYTn_vRECleH7PZg7Vs0TLonA",
+  authDomain:  "hand-signs-5cad1.firebaseapp.com",
+  databaseURL: "https://hand-signs-5cad1-default-rtdb.firebaseio.com",
+  projectId:   "hand-signs-5cad1",
+  appId:       "1:380188687647:web:856ab6cc1b76ef2b37442a"
 };
 
 // إيميلك أنت — هاد الوحيد اللي بيقدر يفتح لوحة الأدمن ويحظر.
