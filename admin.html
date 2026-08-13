@@ -23,6 +23,14 @@
   .ghost{padding:8px 14px;font-size:13px;background:#1b2138;color:#c9d0e6;border:1px solid #2c3352}
   .danger{padding:8px 14px;font-size:13px;font-weight:700;background:#3a1220;color:#ff8a8a;border:1px solid #6b1f33}
   .ok{padding:8px 14px;font-size:13px;font-weight:700;background:#0f2e1d;color:#6ee7a0;border:1px solid #1d5c39}
+  .link-btn{background:none;border:0;color:#8ab4ff;font-size:14.5px;text-decoration:underline;padding:8px}
+  .hint{font-size:13px;opacity:.55;max-width:27em;line-height:1.8}
+  #gateMsg{font-size:14px;line-height:1.9;max-width:27em;color:#ff8a8a;min-height:1.5em}
+  #gateMsg.good{color:#6ee7a0}
+  .warn2{background:#2a1a08;border:1px solid #6b4a12;color:#ffcf8a;padding:13px 17px;
+    border-radius:13px;font-size:13.5px;line-height:1.9;max-width:29em}
+  #dberr{background:#3a1220;border:1px solid #6b1f33;color:#ff8a8a;padding:13px 17px;
+    border-radius:13px;font-size:13.5px;line-height:1.85;margin-top:14px}
 
   /* الهيدر والأرقام */
   header{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
@@ -63,9 +71,13 @@
 <div id="gate">
   <div style="font-size:52px">🔒</div>
   <h1>لوحة التحكم</h1>
-  <p>هاي الصفحة لصاحب الموقع بس. سجّل دخول بحساب جوجل تبعك.</p>
-  <button id="login" class="primary">دخول بحساب جوجل</button>
-  <p id="gateMsg" style="color:#ff8a8a"></p>
+  <p>هاي الصفحة لصاحب الموقع بس.</p>
+  <div id="inapp" class="warn2" hidden>⚠️ أنت فاتح الصفحة من متصفح داخل تطبيق (واتساب/تيليجرام/فيسبوك).
+    جوجل بيمنع تسجيل الدخول من هون. استخدم زر الإيميل تحت، أو افتح الرابط بكروم/سفاري.</div>
+  <button id="mail" class="primary">📧 ابعتلي رابط دخول على إيميلي</button>
+  <p class="hint">بيوصلك رابط على إيميلك، تضغط عليه وبتفتح اللوحة على طول. بيشتغل بكل المتصفحات.</p>
+  <button id="login" class="link-btn">أو ادخل بحساب جوجل</button>
+  <p id="gateMsg"></p>
 </div>
 
 <div id="panel" hidden>
@@ -105,8 +117,8 @@
 <script type="module">
 import { firebaseConfig, OWNER_EMAIL, isConfigured } from "./firebase-config.js";
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
-import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect,
-         getRedirectResult, signOut, onAuthStateChanged }
+import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged,
+         sendSignInLinkToEmail, isSignInWithEmailLink, signInWithEmailLink }
   from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
 import { getDatabase, ref, onValue, set, remove }
   from "https://www.gstatic.com/firebasejs/10.12.5/firebase-database.js";
@@ -126,27 +138,71 @@ const auth = getAuth(app);
 const db   = getDatabase(app);
 
 /* ---------- الدخول ---------- */
+const ADMIN_URL = location.origin + location.pathname;
+const say = (msg, good) => { gateMsg.textContent = msg; gateMsg.className = good ? 'good' : ''; };
+
+// متصفح جوّا تطبيق (واتساب/تيليجرام…)؟ جوجل بيمنع الدخول من هون
+const ua = navigator.userAgent || '';
+if (/FBAN|FBAV|FB_IAB|Instagram|Line\/|WhatsApp|Telegram|MicroMessenger/i.test(ua) ||
+    (/Android/.test(ua) && /;\s*wv\)/.test(ua)))
+  $('inapp').hidden = false;
+
+// (١) الطريقة الأكيدة: رابط دخول على الإيميل — بدون نوافذ منبثقة
+$('mail').onclick = async () => {
+  $('mail').disabled = true;
+  say('جاري الإرسال…');
+  try {
+    await sendSignInLinkToEmail(auth, OWNER_EMAIL, { url: ADMIN_URL, handleCodeInApp: true });
+    say('بعتنالك الرابط على ' + OWNER_EMAIL + ' — افتح إيميلك واضغط عليه. (لو ما إجا شوف Spam)', true);
+  } catch (e) { say('ما زبط الإرسال (' + (e.code || e.message) + ')'); }
+  $('mail').disabled = false;
+};
+
+// لما ترجع من رابط الإيميل، منكمّل الدخول
+if (isSignInWithEmailLink(auth, location.href)) {
+  say('جاري الدخول…');
+  try {
+    await signInWithEmailLink(auth, OWNER_EMAIL, location.href);
+  } catch (e) {
+    say('الرابط ما زبط (' + (e.code || e.message) + '). اطلب رابط جديد.');
+  }
+  history.replaceState(null, '', ADMIN_URL);   // ننضّف الرابط
+}
+
+// (٢) الطريقة السريعة: جوجل — بس بتفشل بمتصفحات التطبيقات
 const provider = new GoogleAuthProvider();
 provider.setCustomParameters({ prompt: 'select_account' });
 
 $('login').onclick = async () => {
-  gateMsg.textContent = '';
-  try { await signInWithPopup(auth, provider); }
-  catch (e) {
-    if (e.code === 'auth/popup-blocked' || e.code === 'auth/operation-not-supported-in-this-environment')
-      return signInWithRedirect(auth, provider);
-    gateMsg.textContent = 'ما زبط الدخول: ' + (e.code || e.message);
+  say('فاتح نافذة جوجل…');
+  try {
+    await Promise.race([
+      signInWithPopup(auth, provider),
+      new Promise((_, rj) => setTimeout(() => rj(new Error('TIMEOUT')), 45000))
+    ]);
+  } catch (e) {
+    say(e.message === 'TIMEOUT'
+      ? 'نافذة جوجل ما ردّت — على الأغلب المتصفح مانعها. استخدم زر الإيميل فوق.'
+      : 'ما زبط الدخول بجوجل (' + (e.code || e.message) + '). استخدم زر الإيميل فوق.');
   }
 };
+
 $('logout').onclick = () => signOut(auth);
-getRedirectResult(auth).catch(() => {});
 
 onAuthStateChanged(auth, user => {
   if (!user){ gate.hidden = false; panel.hidden = true; return; }
+
+  if (user.isAnonymous){ signOut(auth); return; }   // جلسة زائر من الموقع نفسه — منتجاهلها بهدوء
+
   if (user.email !== OWNER_EMAIL){
-    gateMsg.textContent = 'هاد الحساب ما إله صلاحية. سجّل دخول بحسابك أنت.';
+    say('هاد الحساب (' + (user.email || '؟') + ') ما إله صلاحية. ادخل بحسابك أنت.');
     signOut(auth); return;
   }
+  if (!user.emailVerified){
+    say('إيميلك مش موثّق. استخدم زر «ابعتلي رابط دخول على إيميلي» فوق.');
+    signOut(auth); return;
+  }
+
   gate.hidden = true; panel.hidden = false;
   $('who').textContent = user.email;
   listen();
@@ -157,9 +213,18 @@ let users = {}, bans = {}, vios = {}, started = false;
 
 function listen(){
   if (started) return; started = true;
-  onValue(ref(db, 'users'),      s => { users = s.val() || {}; render(); });
-  onValue(ref(db, 'bans'),       s => { bans  = s.val() || {}; render(); });
-  onValue(ref(db, 'violations'), s => { vios  = s.val() || {}; render(); });
+  // لو القراءة انرفضت، منقول ليش بدل ما تضل اللوحة فاضية
+  const onErr = e => {
+    if (document.getElementById('dberr')) return;
+    const d = document.createElement('div');
+    d.id = 'dberr';
+    d.textContent = 'ما قدرت أقرأ البيانات (' + (e.code || e.message) + '). ' +
+                    'تأكد إنك داخل بإيميلك الصح عن طريق رابط الإيميل.';
+    panel.prepend(d);
+  };
+  onValue(ref(db, 'users'),      s => { users = s.val() || {}; render(); }, onErr);
+  onValue(ref(db, 'bans'),       s => { bans  = s.val() || {}; render(); }, onErr);
+  onValue(ref(db, 'violations'), s => { vios  = s.val() || {}; render(); }, onErr);
 }
 
 const fmt = t => t ? new Intl.DateTimeFormat('ar-JO-u-nu-latn',
