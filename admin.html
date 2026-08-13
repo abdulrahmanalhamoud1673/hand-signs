@@ -198,11 +198,8 @@ onAuthStateChanged(auth, user => {
     say('هاد الحساب (' + (user.email || '؟') + ') ما إله صلاحية. ادخل بحسابك أنت.');
     signOut(auth); return;
   }
-  if (!user.emailVerified){
-    say('إيميلك مش موثّق. استخدم زر «ابعتلي رابط دخول على إيميلي» فوق.');
-    signOut(auth); return;
-  }
-
+  // ما منوقفه هون حتى لو الإيميل مش موثّق — منخليه يفوت وقواعد الحماية بتقرر،
+  // وإذا رفضت بتطلعله الرسالة اللي بتقول السبب بالظبط (بدل ما يعلق بره)
   gate.hidden = true; panel.hidden = false;
   $('who').textContent = user.email;
   listen();
