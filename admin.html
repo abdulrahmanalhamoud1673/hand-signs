@@ -79,7 +79,7 @@
   @keyframes blink{50%{opacity:.2}}
   #liveImg{width:min(88vw,520px);aspect-ratio:4/3;object-fit:cover;background:#000;
     border-radius:14px;border:2px solid #6b1f33}
-  #liveState{font-size:14px;opacity:.7;min-height:1.5em}
+  #liveState{font-size:14.5px;opacity:.85;min-height:1.5em;line-height:1.9;max-width:30em}
   #liveClose{padding:12px 30px;font-size:16px;font-weight:800;border:0;border-radius:12px;
     cursor:pointer;background:linear-gradient(135deg,#ff5c5c,#c0122a);color:#fff}
 
@@ -320,7 +320,15 @@ async function live(uid){
   $('liveModal').classList.add('show');
 
   try { await update(ref(db, 'live/' + uid), { on: true, ts: Date.now() }); }
-  catch (e) { $('liveState').textContent = 'ما قدرت أبلّش (' + (e.code || e.message) + ')'; return; }
+  catch (e) {
+    const denied = /permission|PERMISSION_DENIED/i.test((e.code || '') + (e.message || ''));
+    $('liveState').innerHTML = denied
+      ? '⚠️ ميزة المشاهدة لسه ما اشتغلت لأن <b>قواعد الحماية الجديدة ما اننشرت</b>.<br>' +
+        'روح: Firebase Console ← Realtime Database ← تبويب Rules ← الصق ملف القواعد ← Publish.<br>' +
+        'بعدها ارجع جرّب.'
+      : 'ما قدرت أبلّش (' + (e.code || e.message) + ')';
+    return;
+  }
 
   liveUnsub = onValue(ref(db, 'live/' + uid), s => {
     const d = s.val() || {};
