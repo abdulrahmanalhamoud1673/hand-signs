@@ -48,7 +48,40 @@
     display:flex;align-items:center;justify-content:center;font-size:34px;opacity:.5}
   .vio h3{font-size:15px;margin:9px 0 2px}
   .vio small{display:block;font-size:11.5px;opacity:.6;line-height:1.7}
-  .vio .row{display:flex;gap:6px;margin-top:10px}
+  .vio .row{display:flex;gap:6px;margin-top:10px;flex-wrap:wrap}
+  .vio img{cursor:zoom-in}
+  .btn-sm{padding:8px 12px;font-size:12.5px;font-weight:700;border-radius:10px;cursor:pointer;
+    border:1px solid #2c3352;background:#1b2138;color:#c9d0e6}
+  .btn-live{background:#3a1220;color:#ff9db0;border-color:#6b1f33}
+  .btn-live.active{background:#2a0d14;color:#ff5c72;border-color:#8a2740}
+
+  /* عارض الصورة المكبّرة */
+  #lightbox{position:fixed;inset:0;z-index:60;display:none;flex-direction:column;
+    align-items:center;justify-content:center;gap:16px;padding:20px;
+    background:rgba(3,4,10,.92);backdrop-filter:blur(6px)}
+  #lightbox.show{display:flex}
+  #lightbox img{max-width:94vw;max-height:74vh;border-radius:12px;
+    box-shadow:0 20px 60px rgba(0,0,0,.6)}
+  #lightbox .lb-actions{display:flex;gap:12px}
+  #lightbox a,#lightbox button{padding:12px 24px;font-size:15px;font-weight:800;border-radius:12px;
+    cursor:pointer;border:0;text-decoration:none;font-family:inherit}
+  .dl{background:linear-gradient(135deg,#ffd93b,#ff9f1c);color:#07080f}
+  .cl{background:#1b2138;color:#c9d0e6;border:1px solid #2c3352!important}
+
+  /* عارض البث المباشر */
+  #liveModal{position:fixed;inset:0;z-index:55;display:none;flex-direction:column;
+    align-items:center;justify-content:center;gap:14px;padding:20px;text-align:center;
+    background:rgba(3,4,10,.94);backdrop-filter:blur(6px)}
+  #liveModal.show{display:flex}
+  #liveModal h3{font-size:19px;display:flex;align-items:center;gap:9px}
+  #liveModal .rec{width:12px;height:12px;border-radius:50%;background:#ff3b3b;
+    animation:blink 1s steps(2) infinite}
+  @keyframes blink{50%{opacity:.2}}
+  #liveImg{width:min(88vw,520px);aspect-ratio:4/3;object-fit:cover;background:#000;
+    border-radius:14px;border:2px solid #6b1f33}
+  #liveState{font-size:14px;opacity:.7;min-height:1.5em}
+  #liveClose{padding:12px 30px;font-size:16px;font-weight:800;border:0;border-radius:12px;
+    cursor:pointer;background:linear-gradient(135deg,#ff5c5c,#c0122a);color:#fff}
 
   /* جدول الزوار */
   #search{width:100%;padding:12px 14px;border-radius:12px;background:#111527;
@@ -106,12 +139,27 @@
     <table>
       <thead><tr>
         <th>الاسم</th><th>المكان</th><th>آخر ظهور</th>
-        <th>زيارات</th><th>إشارات</th><th>مخالفات</th><th></th>
+        <th>زيارات</th><th>إشارات</th><th>مخالفات</th><th>مباشر</th><th></th>
       </tr></thead>
       <tbody id="rows"></tbody>
     </table>
     <div id="rowsEmpty" class="muted">لسه ما فتح الموقع حدا.</div>
   </div>
+</div>
+
+<div id="lightbox">
+  <img id="lbImg" alt="لقطة">
+  <div class="lb-actions">
+    <a id="lbDownload" class="dl" download>⬇️ حمّل الصورة</a>
+    <button class="cl" id="lbClose">إغلاق</button>
+  </div>
+</div>
+
+<div id="liveModal">
+  <h3><span class="rec"></span> <span id="liveName">مشاهدة مباشرة</span></h3>
+  <img id="liveImg" alt="بث مباشر">
+  <div id="liveState">جاري الاتصال…</div>
+  <button id="liveClose">إيقاف المشاهدة</button>
 </div>
 
 <script type="module">
@@ -120,7 +168,7 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/fireba
 import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged,
          sendSignInLinkToEmail, isSignInWithEmailLink, signInWithEmailLink }
   from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
-import { getDatabase, ref, onValue, set, remove }
+import { getDatabase, ref, onValue, set, update, remove }
   from "https://www.gstatic.com/firebasejs/10.12.5/firebase-database.js";
 
 const $ = id => document.getElementById(id);
@@ -245,7 +293,65 @@ async function unban(uid){
 async function delVio(id){
   if (confirm('احذف هاي المخالفة؟')) await remove(ref(db, 'violations/' + id));
 }
-window.__admin = { ban, unban, delVio };   // للأزرار
+
+/* ---------- تكبير / تحميل الصورة ---------- */
+function zoom(id){
+  const v = vios[id]; if (!v || !v.img) return;
+  $('lbImg').src = v.img;
+  const stamp = new Date(v.t || Date.now()).toISOString().slice(0,19).replace(/[:T]/g,'-');
+  const dl = $('lbDownload');
+  dl.href = v.img;
+  dl.download = `مخالفة-${(v.name||'زائر')}-${stamp}.jpg`;
+  $('lightbox').classList.add('show');
+}
+$('lbClose').onclick = () => $('lightbox').classList.remove('show');
+$('lightbox').onclick = e => { if (e.target === $('lightbox')) $('lightbox').classList.remove('show'); };
+
+/* ---------- المشاهدة المباشرة ---------- */
+let liveUid = null, liveUnsub = null, liveIdleTimer = null, liveFrames = 0;
+
+async function live(uid){
+  if (liveUid) stopWatching();            // نوقف أي بث سابق
+  liveUid = uid;
+  liveFrames = 0;
+  $('liveName').textContent = 'مشاهدة: ' + (users[uid]?.name || 'زائر');
+  $('liveImg').removeAttribute('src');
+  $('liveState').textContent = 'جاري إرسال الطلب للجهاز… (بينتظر الزائر يكون فاتح الموقع)';
+  $('liveModal').classList.add('show');
+
+  try { await update(ref(db, 'live/' + uid), { on: true, ts: Date.now() }); }
+  catch (e) { $('liveState').textContent = 'ما قدرت أبلّش (' + (e.code || e.message) + ')'; return; }
+
+  liveUnsub = onValue(ref(db, 'live/' + uid), s => {
+    const d = s.val() || {};
+    if (d.on === false){ $('liveState').textContent = '✋ الزائر أوقف المشاهدة.'; return; }
+    if (d.frame){
+      $('liveImg').src = d.frame;
+      liveFrames++;
+      const ago = Math.max(0, Math.round((Date.now() - (d.ts||Date.now())) / 1000));
+      $('liveState').textContent = `🔴 مباشر — آخر صورة قبل ${ago} ثانية`;
+      clearTimeout(liveIdleTimer);
+      liveIdleTimer = setTimeout(() => {
+        $('liveState').textContent = '⏳ الصورة وقفت — يمكن الزائر سكّر الموقع أو ضعف النت.';
+      }, 6000);
+    } else if (liveFrames === 0){
+      $('liveState').textContent = '⏳ بانتظار الزائر… لازم يكون فاتح الموقع هلأ.';
+    }
+  }, err => { $('liveState').textContent = 'خطأ بالقراءة (' + (err.code||err.message) + ')'; });
+}
+
+async function stopWatching(){
+  clearTimeout(liveIdleTimer);
+  if (liveUnsub){ liveUnsub(); liveUnsub = null; }
+  const uid = liveUid; liveUid = null;
+  $('liveModal').classList.remove('show');
+  if (uid){                                // نطفي الطلب ومنمسح آخر صورة
+    try { await set(ref(db, 'live/' + uid), { on: false, ts: Date.now() }); } catch {}
+  }
+}
+$('liveClose').onclick = stopWatching;
+
+window.__admin = { ban, unban, delVio, zoom, live };   // للأزرار
 
 /* ---------- الرسم ---------- */
 function render(){
@@ -263,12 +369,13 @@ function render(){
   $('vios').innerHTML = vl.map(([id, v]) => {
     const isBanned = !!bans[v.uid];
     return `<div class="card vio">
-      ${v.img ? `<img src="${esc(v.img)}" alt="لقطة">` : `<div class="no-img">📷</div>`}
+      ${v.img ? `<img src="${esc(v.img)}" alt="لقطة" onclick="__admin.zoom('${id}')">` : `<div class="no-img">📷</div>`}
       <h3>${esc(v.name) || 'بدون اسم'} ${isBanned ? '<span class="tag">محظور</span>' : ''}</h3>
       <small>${v.type === 'middle_finger' ? '🖕 إشارة مسيئة' : esc(v.type)}</small>
       <small>${fmt(v.t)}</small>
       <small>${esc(v.place) || '—'}</small>
       <div class="row">
+        ${v.img ? `<button class="btn-sm" onclick="__admin.zoom('${id}')">🔍 كبّر / حمّل</button>` : ''}
         ${isBanned
           ? `<button class="ok" onclick="__admin.unban('${v.uid}')">رفع الحظر</button>`
           : `<button class="danger" onclick="__admin.ban('${v.uid}')">🔨 حظر</button>`}
@@ -295,6 +402,9 @@ function render(){
       <td>${u.visits || 0}</td>
       <td>${u.gestures || 0}</td>
       <td>${u.violations ? `<b style="color:#ff8a8a">${u.violations}</b>` : 0}</td>
+      <td>${(online && !isBanned)
+        ? `<button class="btn-sm btn-live" onclick="__admin.live('${uid}')">🔴 شاهد</button>`
+        : `<span style="opacity:.35">${online ? '—' : 'غير متصل'}</span>`}</td>
       <td>${isBanned
         ? `<button class="ok" onclick="__admin.unban('${uid}')">رفع الحظر</button>`
         : `<button class="danger" onclick="__admin.ban('${uid}')">🔨 حظر</button>`}</td>

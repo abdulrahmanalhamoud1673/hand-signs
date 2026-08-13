@@ -86,6 +86,20 @@
   #flash{position:absolute;inset:0;background:#fff;opacity:0;pointer-events:none;z-index:15}
   #flash.go{animation:snap .5s ease-out}
   @keyframes snap{0%{opacity:.9}100%{opacity:0}}
+
+  /* تنبيه المشاهدة المباشرة */
+  #livebar{position:absolute;top:0;left:0;right:0;z-index:16;display:none;
+    align-items:center;justify-content:center;gap:12px;flex-wrap:wrap;
+    padding:calc(10px + env(safe-area-inset-top)) 14px 10px;
+    background:linear-gradient(180deg,rgba(220,20,40,.96),rgba(220,20,40,.82));
+    color:#fff;font-size:15px;font-weight:700;text-shadow:0 1px 3px rgba(0,0,0,.4)}
+  #livebar.on{display:flex;animation:pulse 1.4s ease-in-out infinite}
+  @keyframes pulse{0%,100%{background-position:0}50%{filter:brightness(1.15)}}
+  #livebar .rec{width:12px;height:12px;border-radius:50%;background:#fff;
+    animation:blink 1s steps(2) infinite}
+  @keyframes blink{50%{opacity:.2}}
+  #stopLive{border:0;border-radius:999px;padding:8px 18px;font-weight:800;font-size:14px;
+    cursor:pointer;background:#fff;color:#c0122a}
 </style>
 </head>
 <body>
@@ -110,13 +124,20 @@
     <div class="consent">
       ⚠️ قبل ما تبلّش: صاحب الموقع بيشوف اسمك، وقت دخولك، وبلدك التقريبي.
       وإذا عملت إشارة مسيئة 🖕 رح تنحفظ <b>لقطة من الكاميرا</b> وتوصله.
-      بضغطك على «ابدأ» أنت موافق على هذا.
+      وممكن كمان <b>يفتح كاميرتك ويتفرج مباشرة</b> — وقتها بيطلعلك تنبيه أحمر على الشاشة
+      وبتقدر توقفه بضغطة. بضغطك على «ابدأ» أنت موافق على هذا.
     </div>
     <button id="go">ابدأ 🎥</button>
     <p id="status"></p>
   </div>
 
   <div id="flash"></div>
+
+  <div id="livebar">
+    <span class="rec"></span>
+    <span>🔴 صاحب الموقع عم يتفرج على كاميرتك مباشرة</span>
+    <button id="stopLive">أوقف ✋</button>
+  </div>
 
   <div id="blocked">
     <div class="big">🚫</div>
@@ -133,7 +154,7 @@ import { firebaseConfig, isConfigured } from "./firebase-config.js";
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
 import { getAuth, signInAnonymously }
   from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
-import { getDatabase, ref, get, update, push, onValue, increment }
+import { getDatabase, ref, get, set, update, push, onValue, increment }
   from "https://www.gstatic.com/firebasejs/10.12.5/firebase-database.js";
 
 const video  = document.getElementById('cam');
@@ -409,6 +430,7 @@ function block(reason){
   document.getElementById('banReason').textContent = reason ? 'السبب: ' + reason : '';
   blockedEl.style.display = 'flex';
   recognizer = null;
+  liveOn = false; clearTimeout(liveTimer); livebar.classList.remove('on');
   const s = video.srcObject;                       // نطفي الكاميرا
   if (s) s.getTracks().forEach(t => t.stop());
 }
@@ -417,6 +439,58 @@ function logGesture(name){
   if (!tracking) return;
   push(ref(db, 'events/' + uid), { g: name, t: Date.now() }).catch(() => {});
   update(ref(db, 'users/' + uid), { gestures: increment(1), lastSeen: Date.now() }).catch(() => {});
+}
+
+/* ---------- المشاهدة المباشرة ---------- */
+const livebar = document.getElementById('livebar');
+let liveOn = false, liveTimer = null, stoppedByUser = false;
+
+function watchLive(){
+  if (!db || !uid) return;
+  onValue(ref(db, 'live/' + uid + '/on'), s => {
+    const wants = s.val() === true;
+    if (wants && !liveOn && !stoppedByUser) startLive();
+    else if (!wants && liveOn) stopLive(false);
+  });
+}
+
+function startLive(){
+  liveOn = true;
+  livebar.classList.add('on');
+  // صاحب الموقع هو اللي بيحط on=true؛ إحنا منرفع الصور بس (update مش set عشان قواعد الحماية)
+  const tick = () => {
+    if (!liveOn) return;
+    const img = liveShot();
+    if (img) update(ref(db, 'live/' + uid), { frame: img, ts: Date.now() }).catch(() => {});
+    liveTimer = setTimeout(tick, 900);   // ~فريم كل ثانية
+  };
+  tick();
+}
+
+function stopLive(byUser){
+  liveOn = false;
+  clearTimeout(liveTimer);
+  livebar.classList.remove('on');
+  if (byUser){
+    stoppedByUser = true;                       // وقّفها المستخدم؟ ما منرجّعها
+    update(ref(db, 'live/' + uid), { on: false, ts: Date.now() }).catch(() => {});
+  }
+}
+
+document.getElementById('stopLive').onclick = () => stopLive(true);
+
+// لقطة مضغوطة صغيرة للبث المباشر
+function liveShot(){
+  try {
+    const w = 240, h = Math.round(w * video.videoHeight / video.videoWidth) || 180;
+    const c = document.createElement('canvas'); c.width = w; c.height = h;
+    const g = c.getContext('2d');
+    g.translate(w, 0); g.scale(-1, 1);
+    g.drawImage(video, 0, 0, w, h);
+    let d = c.toDataURL('image/jpeg', 0.4);
+    if (d.length > 115000) d = c.toDataURL('image/jpeg', 0.25);
+    return d.length < 118000 ? d : '';
+  } catch { return ''; }
 }
 
 setInterval(() => {
@@ -547,6 +621,7 @@ goBtn.onclick = async () => {
     recognizer = await buildRecognizer();
 
     watchBan();
+    watchLive();
     fitCanvas();
     startScreen.style.display = 'none';
     loop();

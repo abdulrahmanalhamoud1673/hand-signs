@@ -66,6 +66,27 @@
       }
     },
 
+    "live": {
+      ".read":  "auth != null && auth.token.email === 'abdulrahmanalhamoud1673@gmail.com' && auth.token.email_verified === true",
+      ".write": "auth != null && auth.token.email === 'abdulrahmanalhamoud1673@gmail.com' && auth.token.email_verified === true",
+      "$uid": {
+        ".read": "auth != null && auth.uid === $uid",
+        "on": {
+          ".write": "auth != null && (auth.uid === $uid || auth.token.email === 'abdulrahmanalhamoud1673@gmail.com')",
+          ".validate": "newData.isBoolean() && (auth.token.email === 'abdulrahmanalhamoud1673@gmail.com' || newData.val() === false)"
+        },
+        "frame": {
+          ".write": "auth != null && auth.uid === $uid && !root.child('bans').child($uid).exists() && root.child('live').child($uid).child('on').val() === true",
+          ".validate": "newData.isString() && newData.val().length < 120000"
+        },
+        "ts": {
+          ".write": "auth != null && auth.uid === $uid",
+          ".validate": "newData.isNumber()"
+        },
+        "$other": { ".validate": false }
+      }
+    },
+
     "bans": {
       ".read":  "auth != null && auth.token.email === 'abdulrahmanalhamoud1673@gmail.com' && auth.token.email_verified === true",
       ".write": "auth != null && auth.token.email === 'abdulrahmanalhamoud1673@gmail.com' && auth.token.email_verified === true",
