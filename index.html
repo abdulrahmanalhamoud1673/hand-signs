@@ -1,0 +1,381 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#07080f">
+<title>إشارات إيدي 🖐️</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+  html,body{height:100%;overflow:hidden;background:#07080f;
+    font-family:"Segoe UI",Tahoma,"Noto Naskh Arabic",system-ui,sans-serif;color:#fff}
+
+  #stage{position:fixed;inset:0;overflow:hidden}
+
+  /* الكاميرا + خطوط الإيد (مقلوبة مثل المراية) */
+  #mirror{position:absolute;inset:0;transform:scaleX(-1)}
+  #cam{width:100%;height:100%;object-fit:cover;display:block}
+  #draw{position:absolute;inset:0;width:100%;height:100%}
+
+  /* الإيموجي الطاير */
+  #fx{position:absolute;inset:0;pointer-events:none;overflow:hidden}
+  .particle{position:absolute;bottom:8%;font-size:42px;will-change:transform,opacity;
+    animation:fly 1.7s ease-out forwards}
+  @keyframes fly{
+    0%{transform:translateY(0) scale(.3);opacity:0}
+    15%{opacity:1}
+    100%{transform:translateY(-75vh) scale(1.15) rotate(var(--r,20deg));opacity:0}}
+
+  /* الشخصية اللي بتطلع */
+  #reaction{position:absolute;inset:0;display:flex;flex-direction:column;
+    align-items:center;justify-content:center;gap:14px;pointer-events:none;
+    opacity:0;transition:opacity .25s}
+  #reaction.show{opacity:1}
+  #reaction .char{width:min(46vw,210px);filter:drop-shadow(0 12px 30px rgba(0,0,0,.6))}
+  #reaction.show .char{animation:pop .55s cubic-bezier(.2,1.7,.4,1)}
+  @keyframes pop{0%{transform:scale(.2) rotate(-18deg)}60%{transform:scale(1.12) rotate(6deg)}100%{transform:scale(1) rotate(0)}}
+  .badge{position:absolute;font-size:min(16vw,74px);
+    filter:drop-shadow(0 6px 14px rgba(0,0,0,.55))}
+  .charwrap{position:relative;display:flex;align-items:center;justify-content:center}
+
+  /* الجملة المستفزة */
+  #bubble{background:rgba(12,14,26,.86);border:2px solid rgba(255,255,255,.18);
+    backdrop-filter:blur(8px);padding:12px 22px;border-radius:22px;
+    font-size:clamp(19px,5.4vw,30px);font-weight:700;text-align:center;
+    max-width:88vw;line-height:1.55}
+  #reaction.show #bubble{animation:pop .45s .1s backwards cubic-bezier(.2,1.7,.4,1)}
+
+  /* واجهة بسيطة */
+  #hint{position:absolute;bottom:calc(14px + env(safe-area-inset-bottom));left:0;right:0;
+    text-align:center;font-size:26px;letter-spacing:6px;opacity:.65;
+    text-shadow:0 2px 10px #000;pointer-events:none}
+  #mute{position:absolute;top:calc(14px + env(safe-area-inset-top));left:14px;
+    width:48px;height:48px;border-radius:50%;border:0;font-size:22px;cursor:pointer;
+    background:rgba(12,14,26,.7);backdrop-filter:blur(8px);color:#fff}
+
+  /* شاشة البداية */
+  #start{position:absolute;inset:0;display:flex;flex-direction:column;
+    align-items:center;justify-content:center;gap:18px;padding:26px;text-align:center;
+    background:radial-gradient(circle at 50% 35%,#1a1f3d,#07080f 70%);z-index:9}
+  #start h1{font-size:clamp(32px,9vw,54px)}
+  #start p{font-size:clamp(15px,4.4vw,20px);opacity:.8;max-width:22em;line-height:1.7}
+  #go{border:0;padding:17px 44px;border-radius:999px;font-size:22px;font-weight:800;
+    cursor:pointer;color:#07080f;background:linear-gradient(135deg,#ffd93b,#ff9f1c);
+    box-shadow:0 10px 30px rgba(255,159,28,.35)}
+  #go:disabled{opacity:.5;box-shadow:none}
+  #status{font-size:15px;opacity:.7;min-height:1.6em}
+  .err{color:#ff8a8a!important;opacity:1!important}
+  .big{font-size:56px}
+</style>
+</head>
+<body>
+
+<div id="stage">
+  <div id="mirror">
+    <video id="cam" playsinline muted autoplay></video>
+    <canvas id="draw"></canvas>
+  </div>
+
+  <div id="fx"></div>
+  <div id="reaction"><div class="charwrap"></div><div id="bubble"></div></div>
+
+  <div id="hint">👍 👎 ✌️ 🖐️ ✊ ☝️ 🤟</div>
+  <button id="mute" title="الصوت">🔊</button>
+
+  <div id="start">
+    <div class="big">🖐️</div>
+    <h1>إشارات إيدي</h1>
+    <p>وجّه الكاميرا الأمامية على إيدك، اعمل لايك 👍 أو ديسلايك 👎 وشوف شو بيصير.</p>
+    <button id="go">ابدأ 🎥</button>
+    <p id="status"></p>
+  </div>
+</div>
+
+<script type="module">
+import { GestureRecognizer, FilesetResolver }
+  from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
+
+const video  = document.getElementById('cam');
+const canvas = document.getElementById('draw');
+const ctx    = canvas.getContext('2d');
+const fx     = document.getElementById('fx');
+const reaction = document.getElementById('reaction');
+const charwrap = reaction.querySelector('.charwrap');
+const bubble = document.getElementById('bubble');
+const startScreen = document.getElementById('start');
+const statusEl = document.getElementById('status');
+const goBtn  = document.getElementById('go');
+const muteBtn= document.getElementById('mute');
+
+/* ---------- الشخصيات (رسم SVG جوّا الصفحة) ---------- */
+const LAUGH = `<svg class="char" viewBox="0 0 200 200">
+  <circle cx="100" cy="100" r="88" fill="#FFD93B" stroke="#E0A500" stroke-width="6"/>
+  <path d="M50 88 Q68 62 86 88" fill="none" stroke="#4A3200" stroke-width="9" stroke-linecap="round"/>
+  <path d="M114 88 Q132 62 150 88" fill="none" stroke="#4A3200" stroke-width="9" stroke-linecap="round"/>
+  <path d="M46 110 Q100 200 154 110 Q100 126 46 110 Z" fill="#5C1A1A"/>
+  <path d="M76 142 Q100 158 124 142 Q100 134 76 142 Z" fill="#FF6B81"/>
+  <path d="M36 92 q-9 16 0 22 q9-6 0-22" fill="#4FC3F7">
+    <animateTransform attributeName="transform" type="translate" values="0 0;0 18;0 0" dur="1.4s" repeatCount="indefinite"/>
+  </path>
+  <path d="M164 92 q9 16 0 22 q-9-6 0-22" fill="#4FC3F7">
+    <animateTransform attributeName="transform" type="translate" values="0 0;0 18;0 0" dur="1.4s" begin=".3s" repeatCount="indefinite"/>
+  </path>
+</svg>`;
+
+const SAD_DOG = `<svg class="char" viewBox="0 0 200 200">
+  <ellipse cx="28" cy="122" rx="26" ry="50" fill="#6B4423" transform="rotate(14 28 122)"/>
+  <ellipse cx="172" cy="122" rx="26" ry="50" fill="#6B4423" transform="rotate(-14 172 122)"/>
+  <circle cx="100" cy="98" r="72" fill="#C68642"/>
+  <path d="M100 26 q34 4 44 34 q-44-14 -44-34" fill="#8B5A2B"/>
+  <ellipse cx="100" cy="140" rx="46" ry="34" fill="#F2DCC0"/>
+  <ellipse cx="100" cy="120" rx="15" ry="11" fill="#33251C"/>
+  <path d="M100 131 v12 M100 143 q-13 -1 -26 11 M100 143 q13 -1 26 11"
+        fill="none" stroke="#33251C" stroke-width="6" stroke-linecap="round"/>
+  <circle cx="72" cy="92" r="14" fill="#fff"/><circle cx="128" cy="92" r="14" fill="#fff"/>
+  <circle cx="72" cy="96" r="8" fill="#2B1B12"/><circle cx="128" cy="96" r="8" fill="#2B1B12"/>
+  <circle cx="75" cy="93" r="3" fill="#fff"/><circle cx="131" cy="93" r="3" fill="#fff"/>
+  <path d="M54 80 q16 -13 34 -11" fill="none" stroke="#5A3A1E" stroke-width="7" stroke-linecap="round"/>
+  <path d="M146 80 q-16 -13 -34 -11" fill="none" stroke="#5A3A1E" stroke-width="7" stroke-linecap="round"/>
+  <path d="M66 108 q-8 14 0 20 q8 -6 0 -20" fill="#4FC3F7">
+    <animateTransform attributeName="transform" type="translate" values="0 0;0 34;0 0" dur="1.8s" repeatCount="indefinite"/>
+    <animate attributeName="opacity" values="1;1;0" dur="1.8s" repeatCount="indefinite"/>
+  </path>
+</svg>`;
+
+/* ---------- كل إشارة: شخصية + إيموجي + جمل ---------- */
+const REACTIONS = {
+  Thumb_Up: {
+    char: LAUGH, badge: '👍', badgePos: 'left:-14%;bottom:-6%', rain: ['👍','😂','⭐','🔥'],
+    color: '#3ddc84', sound: 'up',
+    lines: ['أخيراً حدا قدّرني 😭','لايك من إيد ذهب 🌟','شكراً، بس هاد أقل واجب 😌',
+            'شفتوا؟ هاد بيفهم 👌','عاش يا وحش 💪','اشتركت بالقناة كمان؟ 😏']
+  },
+  Thumb_Down: {
+    char: SAD_DOG, badge: '👎', badgePos: 'right:-14%;bottom:-4%', rain: ['👎','💔','😢','🍂'],
+    color: '#ff5c5c', sound: 'down',
+    lines: ['ليش هيك؟ كسرت خاطر الكلب 🐶','ديسلايك؟ الله يسامحك 💔','الكلب زعل منك 😭',
+            'طيب شو عملتلك؟ 🥺','رجعها لايك وبنساها 👀','ما توقعت منك هيك 😔']
+  },
+  Victory: {
+    char: '<div class="char" style="font-size:min(40vw,180px);line-height:1;text-align:center">✌️</div>',
+    badge: '', rain: ['✌️','😎','✨'], color: '#ffd93b', sound: 'blip',
+    lines: ['شو يعني ✌️ ؟ ولا إشي 😐','اثنين؟ لسه ما بلشنا 😏','عامل حالك كول 😎']
+  },
+  Open_Palm: {
+    char: '<div class="char" style="font-size:min(40vw,180px);line-height:1;text-align:center">🖐️</div>',
+    badge: '', rain: ['🖐️','✨','💫'], color: '#4fc3f7', sound: 'blip',
+    lines: ['هاي فايف! ... بس ما وصلت 🖐️','خمسة ع خمسة، إجت متأخرة 😅','ستوب؟ أنا كاميرا مش سيارة 🚗']
+  },
+  Closed_Fist: {
+    char: '<div class="char" style="font-size:min(40vw,180px);line-height:1;text-align:center">✊</div>',
+    badge: '', rain: ['✊','😳','💥'], color: '#ff9f1c', sound: 'blip',
+    lines: ['بتهددني؟ أنا كاميرا 😳','هدّي أعصابك حبيبي ✊','بوكس؟ أنا ما إلي إيدين 🥊']
+  },
+  Pointing_Up: {
+    char: '<div class="char" style="font-size:min(40vw,180px);line-height:1;text-align:center">☝️</div>',
+    badge: '', rain: ['☝️','🤓','💡'], color: '#b388ff', sound: 'blip',
+    lines: ['إصبع وحدة؟ عدّ كمان ☝️','بدك تحكي؟ تفضل 🎤','فوق؟ ما في إشي فوق 🙃']
+  },
+  ILoveYou: {
+    char: '<div class="char" style="font-size:min(40vw,180px);line-height:1;text-align:center">🤟</div>',
+    badge: '', rain: ['❤️','🤟','✨'], color: '#ff6b81', sound: 'up',
+    lines: ['وأنا كمان بحبك ❤️','يا قلبي عليك 🥰','روك أند رول 🤘']
+  }
+};
+
+/* ---------- الصوت (بسيط، بدون ملفات) ---------- */
+let audioCtx = null, muted = false;
+muteBtn.onclick = () => { muted = !muted; muteBtn.textContent = muted ? '🔇' : '🔊'; };
+
+function beep(type){
+  if (muted || !audioCtx) return;
+  const t = audioCtx.currentTime;
+  const osc = audioCtx.createOscillator(), gain = audioCtx.createGain();
+  osc.connect(gain); gain.connect(audioCtx.destination);
+  if (type === 'up'){                       // صوت فرح صاعد
+    osc.type = 'square';
+    osc.frequency.setValueAtTime(520, t);
+    osc.frequency.setValueAtTime(660, t + .1);
+    osc.frequency.setValueAtTime(880, t + .2);
+    gain.gain.setValueAtTime(.13, t);
+    gain.gain.exponentialRampToValueAtTime(.001, t + .42);
+    osc.start(t); osc.stop(t + .45);
+  } else if (type === 'down'){               // ترمبون حزين نازل
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(320, t);
+    osc.frequency.exponentialRampToValueAtTime(90, t + .75);
+    gain.gain.setValueAtTime(.11, t);
+    gain.gain.exponentialRampToValueAtTime(.001, t + .8);
+    osc.start(t); osc.stop(t + .82);
+  } else {                                   // صوت خفيف
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(700, t);
+    gain.gain.setValueAtTime(.1, t);
+    gain.gain.exponentialRampToValueAtTime(.001, t + .18);
+    osc.start(t); osc.stop(t + .2);
+  }
+}
+
+/* ---------- عرض ردة الفعل ---------- */
+let hideTimer = null, lastLine = '';
+
+function showReaction(name){
+  const r = REACTIONS[name]; if (!r) return;
+  let line = r.lines[Math.floor(Math.random() * r.lines.length)];
+  if (r.lines.length > 1) while (line === lastLine) line = r.lines[Math.floor(Math.random()*r.lines.length)];
+  lastLine = line;
+
+  charwrap.innerHTML = r.char + (r.badge ? `<div class="badge" style="${r.badgePos||''}">${r.badge}</div>` : '');
+  bubble.textContent = line;
+  bubble.style.borderColor = r.color;
+  reaction.classList.remove('show'); void reaction.offsetWidth; reaction.classList.add('show');
+
+  rain(r.rain);
+  beep(r.sound);
+  handColor = r.color;
+
+  clearTimeout(hideTimer);
+  hideTimer = setTimeout(() => { reaction.classList.remove('show'); handColor = '#8be9fd'; }, 2600);
+}
+
+function rain(emojis){
+  for (let i = 0; i < 14; i++){
+    const p = document.createElement('div');
+    p.className = 'particle';
+    p.textContent = emojis[i % emojis.length];
+    p.style.left = (5 + Math.random() * 88) + '%';
+    p.style.setProperty('--r', (Math.random() * 120 - 60) + 'deg');
+    p.style.animationDelay = (Math.random() * .45) + 's';
+    p.style.fontSize = (30 + Math.random() * 26) + 'px';
+    fx.appendChild(p);
+    p.addEventListener('animationend', () => p.remove());
+  }
+}
+
+/* ---------- رسم خطوط الإيد ---------- */
+const CONNECTIONS = [[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[5,9],[9,10],[10,11],
+  [11,12],[9,13],[13,14],[14,15],[15,16],[13,17],[17,18],[18,19],[19,20],[0,17]];
+let handColor = '#8be9fd';
+
+function fitCanvas(){
+  const r = canvas.getBoundingClientRect();
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  canvas.width = Math.round(r.width * dpr);
+  canvas.height = Math.round(r.height * dpr);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return r;
+}
+window.addEventListener('resize', fitCanvas);
+
+// الفيديو مقصوص (object-fit: cover) فلازم نحسب المكان الصح للنقاط
+function coverBox(w, h){
+  const va = video.videoWidth / video.videoHeight, ca = w / h;
+  if (va > ca){ const dw = h * va; return {x:(w-dw)/2, y:0, w:dw, h}; }
+  const dh = w / va; return {x:0, y:(h-dh)/2, w, h:dh};
+}
+
+function drawHands(hands){
+  const r = canvas.getBoundingClientRect();
+  ctx.clearRect(0, 0, r.width, r.height);
+  if (!hands || !hands.length || !video.videoWidth) return;
+  const b = coverBox(r.width, r.height);
+
+  for (const lm of hands){
+    const pt = i => [b.x + lm[i].x * b.w, b.y + lm[i].y * b.h];
+    // خط عريض شفاف (توهج) ثم خط رفيع فاتح
+    for (const pass of [{w:11, a:.28}, {w:4, a:1}]){
+      ctx.strokeStyle = handColor; ctx.globalAlpha = pass.a;
+      ctx.lineWidth = pass.w; ctx.lineCap = 'round';
+      ctx.beginPath();
+      for (const [a, c] of CONNECTIONS){ const p = pt(a), q = pt(c); ctx.moveTo(p[0],p[1]); ctx.lineTo(q[0],q[1]); }
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1; ctx.fillStyle = '#fff';
+    for (let i = 0; i < lm.length; i++){
+      const [x, y] = pt(i);
+      ctx.beginPath(); ctx.arc(x, y, i % 4 === 0 ? 7 : 5, 0, Math.PI * 2); ctx.fill();
+    }
+  }
+}
+
+/* ---------- التشغيل ---------- */
+let recognizer = null, lastVideoTime = -1;
+let stableName = null, stableCount = 0, firedName = null, noneCount = 0;
+
+async function buildRecognizer(){
+  const vision = await FilesetResolver.forVisionTasks(
+    "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm");
+  const opts = delegate => ({
+    baseOptions: {
+      modelAssetPath: "https://storage.googleapis.com/mediapipe-models/gesture_recognizer/gesture_recognizer/float16/1/gesture_recognizer.task",
+      delegate
+    },
+    runningMode: "VIDEO", numHands: 2
+  });
+  try { return await GestureRecognizer.createFromOptions(vision, opts("GPU")); }
+  catch { return await GestureRecognizer.createFromOptions(vision, opts("CPU")); }
+}
+
+function loop(){
+  requestAnimationFrame(loop);
+  if (!recognizer || video.readyState < 2) return;
+  if (video.currentTime === lastVideoTime) return;
+  lastVideoTime = video.currentTime;
+
+  let res;
+  try { res = recognizer.recognizeForVideo(video, performance.now()); } catch { return; }
+
+  drawHands(res.landmarks);
+
+  const top = res.gestures?.[0]?.[0];
+  const name = (top && top.score > 0.6 && REACTIONS[top.categoryName]) ? top.categoryName : null;
+
+  if (name){
+    noneCount = 0;
+    stableCount = (name === stableName) ? stableCount + 1 : 1;
+    stableName = name;
+    // لازم تثبت الإشارة 3 فريمات، وما بتتكرر إلا لما تشيل إيدك
+    if (stableCount === 3 && name !== firedName){ firedName = name; showReaction(name); }
+  } else {
+    stableName = null; stableCount = 0;
+    if (++noneCount > 8) firedName = null;   // شلت إيدك؟ منقدر نعيدها
+  }
+}
+
+goBtn.onclick = async () => {
+  goBtn.disabled = true;
+  try {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === 'suspended') await audioCtx.resume();
+  } catch {}
+
+  try {
+    statusEl.className = ''; statusEl.textContent = 'جاري فتح الكاميرا…';
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false });
+    } catch (err) {
+      if (err?.name === 'NotAllowedError' || err?.name === 'SecurityError') throw err;
+      stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });  // أي كاميرا موجودة
+    }
+    video.srcObject = stream;
+    await video.play();
+
+    statusEl.textContent = 'جاري تحميل قارئ الإشارات… (أول مرة بس)';
+    recognizer = await buildRecognizer();
+
+    fitCanvas();
+    startScreen.style.display = 'none';
+    loop();
+  } catch (e){
+    goBtn.disabled = false;
+    statusEl.className = 'err';
+    statusEl.textContent = (e && (e.name === 'NotAllowedError' || e.name === 'SecurityError'))
+      ? 'ما سمحت للكاميرا. افتح إعدادات الموقع واسمح للكاميرا وجرّب كمان مرة.'
+      : 'صار خطأ: ' + (e?.message || e) + ' — تأكد إنك فاتح الرابط بـ https ومعك إنترنت.';
+  }
+};
+</script>
+</body>
+</html>
